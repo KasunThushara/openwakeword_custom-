@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bumblebee · Wake Word</title>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Black+Ops+One&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root {
+  --y:  #FFD000;
+  --y2: #FFA500;
+  --y3: #FFE566;
+  --blk: #080600;
+  --panel: #111008;
+  --steel: #1a1a0e;
+  --glow: rgba(255,208,0,0.7);
+  --glow-soft: rgba(255,208,0,0.25);
+  --blue-glow: rgba(51,170,255,0.8);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--blk);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Share Tech Mono', monospace;
+  overflow: hidden;
+}
+
+.hex-bg {
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100'%3E%3Cpath d='M28 0 L56 16 L56 50 L28 66 L0 50 L0 16Z' fill='none' stroke='rgba(255,208,0,0.04)' stroke-width='1'/%3E%3Cpath d='M28 66 L56 82 L56 116 L28 132 L0 116 L0 82Z' fill='none' stroke='rgba(255,208,0,0.04)' stroke-width='1'/%3E%3C/svg%3E");
+  background-size: 56px 100px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.vignette {
+  position: fixed; inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.92) 100%);
+  pointer-events: none; z-index: 1;
+}
+
+header {
+  position: fixed; top: 0; left: 0; right: 0;
+  padding: 16px 36px;
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px solid rgba(255,208,0,0.1);
+  z-index: 10;
+  background: linear-gradient(180deg, rgba(8,6,0,0.9) 0%, transparent 100%);
+}
+
+.brand {
+  font-family: 'Black Ops One', sans-serif;
+  font-size: 18px; letter-spacing: 4px;
+  color: var(--y);
+  text-shadow: 0 0 20px var(--glow);
+}
+.brand em {
+  color: rgba(255,208,0,0.35); font-style: normal;
+  font-size: 11px; letter-spacing: 3px; margin-left: 10px;
+  font-family: 'Share Tech Mono', monospace;
+}
+
+.hdr-right { display: flex; gap: 24px; align-items: center; }
+.hdr-stat { text-align: right; }
+.hdr-lbl { font-size: 8px; letter-spacing: 3px; color: rgba(255,208,0,0.3); display: block; }
+.hdr-val { font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 13px; color: var(--y); text-shadow: 0 0 8px var(--glow-soft); }
+
+.stage {
+  position: relative; z-index: 5;
+  display: flex; flex-direction: column;
+  align-items: center; gap: 28px;
+}
+
+/* Face */
+.face-wrap {
+  position: relative;
+  filter: drop-shadow(0 0 0px rgba(255,208,0,0));
+  transition: filter 0.4s ease;
+}
+.face-wrap.alert {
+  filter: drop-shadow(0 0 30px rgba(51,170,255,0.45)) drop-shadow(0 0 70px rgba(0,120,255,0.25));
+}
+
+/* Horns glow on alert */
+.horn { transition: filter 0.4s ease; }
+.face-wrap.alert .horn {
+  filter: drop-shadow(0 0 10px rgba(255,208,0,0.9)) drop-shadow(0 0 20px rgba(255,160,0,0.5));
+}
+
+/* Eye visor */
+.eye-visor { transition: fill 0.12s ease; }
+
+/* Scan line */
+.scan-line { opacity: 0; transition: opacity 0.2s; }
+.face-wrap.alert .scan-line {
+  opacity: 1;
+  animation: scanMove 0.55s linear infinite;
+}
+@keyframes scanMove {
+  0%   { transform: translateY(-38px); }
+  100% { transform: translateY(38px); }
+}
+
+/* Eye blue glow pulse */
+.eye-glow-el { opacity: 0; transition: opacity 0.3s; }
+.face-wrap.alert .eye-glow-el {
+  opacity: 1;
+  animation: eyePulse 0.5s ease-in-out infinite alternate;
+}
+@keyframes eyePulse { from { opacity: 0.55; } to { opacity: 1; } }
+
+/* Chevron flicker */
+.chevron-el { transition: opacity 0.2s; }
+.face-wrap.alert .chevron-el { animation: chevFlicker 0.3s steps(1) infinite; }
+@keyframes chevFlicker { 0%,80%{opacity:1} 81%,100%{opacity:0.4} }
+
+/* Speaker bars */
+.speaker-bar { transition: height 0.1s ease, y 0.1s ease; }
+
+/* Accent lines */
+.accent-line { transition: opacity 0.2s; }
+.face-wrap.alert .accent-line { animation: accentPulse 0.8s ease-in-out infinite alternate; }
+@keyframes accentPulse { from{opacity:0.4} to{opacity:1} }
+
+/* Status */
+.status-wrap { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+.status-word {
+  font-family: 'Black Ops One', sans-serif;
+  font-size: 28px; letter-spacing: 8px;
+  color: rgba(255,208,0,0.25);
+  transition: all 0.3s ease;
+}
+.status-word.active {
+  color: var(--y);
+  text-shadow: 0 0 30px var(--glow), 0 0 60px rgba(255,160,0,0.4);
+  animation: textSlam 0.3s cubic-bezier(0.22,1,0.36,1);
+}
+@keyframes textSlam {
+  0%  { transform:scale(1.3); letter-spacing:16px; opacity:0.5; }
+  100%{ transform:scale(1);   letter-spacing:8px;  opacity:1;   }
+}
+
+.status-sub { font-size:9px; letter-spacing:4px; color:rgba(255,208,0,0.2); transition:color 0.3s; }
+.status-sub.active { color:rgba(255,208,0,0.6); }
+
+.det-strip { display:flex; gap:6px; align-items:center; margin-top:4px; }
+.det-dot {
+  width:8px; height:8px; border-radius:1px;
+  background:rgba(255,208,0,0.08); border:1px solid rgba(255,208,0,0.15);
+  transition:all 0.3s; transform:rotate(45deg);
+}
+.det-dot.lit { background:var(--y); box-shadow:0 0 8px var(--y),0 0 16px rgba(255,160,0,0.4); border-color:var(--y3); }
+.det-count { font-size:9px; letter-spacing:3px; color:rgba(255,208,0,0.3); margin-left:6px; transition:color 0.3s; }
+.det-count.active { color:var(--y); }
+
+.cd-wrap { position:relative; width:56px; height:56px; opacity:0; transition:opacity 0.3s; }
+.cd-wrap.show { opacity:1; }
+#cdSvg { transform:rotate(-90deg); }
+#cdArc {
+  fill:none; stroke:#33AAFF; stroke-width:3;
+  stroke-linecap:butt; stroke-dasharray:150; stroke-dashoffset:150;
+  filter:drop-shadow(0 0 5px #33AAFF);
+  transition:stroke-dashoffset 0.1s linear;
+}
+.cd-n {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-family:'Black Ops One',sans-serif; font-size:18px;
+  color:#33AAFF; text-shadow:0 0 12px var(--blue-glow);
+}
+
+.energy-row { display:flex; gap:3px; align-items:flex-end; height:28px; }
+.e-bar { width:5px; border-radius:1px; background:var(--y); opacity:0.2; transition:height 0.1s,opacity 0.1s; min-height:3px; }
+
+.ws-badge { display:flex; align-items:center; gap:6px; font-size:9px; letter-spacing:2px; color:rgba(255,208,0,0.25); transition:color 0.3s; }
+.ws-badge.on { color:var(--y); }
+.ws-dot { width:6px; height:6px; border-radius:50%; background:rgba(255,208,0,0.2); transition:all 0.3s; }
+.ws-badge.on .ws-dot { background:var(--y); box-shadow:0 0 6px var(--y); animation:blink 1.2s steps(1) infinite; }
+@keyframes blink { 50%{opacity:0} }
+
+footer {
+  position:fixed; bottom:0; left:0; right:0; padding:10px 36px;
+  border-top:1px solid rgba(255,208,0,0.07);
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:9px; color:rgba(255,208,0,0.18); letter-spacing:2px; z-index:10;
+}
+.demo-btn {
+  background:rgba(255,208,0,0.07); border:1px solid rgba(255,208,0,0.2);
+  color:rgba(255,208,0,0.5); font-family:'Share Tech Mono',monospace;
+  font-size:9px; letter-spacing:2px; padding:6px 14px; cursor:pointer;
+  border-radius:1px; transition:all 0.2s;
+}
+.demo-btn:hover { background:rgba(255,208,0,0.15); color:var(--y); box-shadow:0 0 12px var(--glow-soft); }
+
+@keyframes faceShake {
+  0%,100%{ transform:translateX(0) rotate(0deg); }
+  15%    { transform:translateX(-6px) rotate(-0.5deg); }
+  30%    { transform:translateX(6px)  rotate(0.5deg); }
+  45%    { transform:translateX(-4px); }
+  60%    { transform:translateX(4px); }
+  75%    { transform:translateX(-2px); }
+}
+.face-wrap.shake { animation:faceShake 0.4s ease; }
+</style>
+</head>
+<body>
+<div class="hex-bg"></div>
+<div class="vignette"></div>
+
+<header>
+  <div class="brand">BUMBLEBEE <em>· WAKE WORD MONITOR</em></div>
+  <div class="hdr-right">
+    <div class="hdr-stat"><span class="hdr-lbl">Engine</span><span class="hdr-val">OPENWAKEWORD</span></div>
+    <div class="hdr-stat"><span class="hdr-lbl">Keyword</span><span class="hdr-val">BUMBLEBEE</span></div>
+    <div class="hdr-stat"><span class="hdr-lbl">Status</span><span class="hdr-val" id="hdrStatus">STANDBY</span></div>
+  </div>
+</header>
+
+<div class="stage">
+  <div class="face-wrap" id="faceWrap">
+    <svg id="faceSvg" viewBox="0 0 420 530" width="420" height="530" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <!-- Panel fills -->
+        <linearGradient id="panelGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#2a2200"/>
+          <stop offset="100%" stop-color="#0d0900"/>
+        </linearGradient>
+        <linearGradient id="hornGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#FFE566"/>
+          <stop offset="55%" stop-color="#FFD000"/>
+          <stop offset="100%" stop-color="#B08000"/>
+        </linearGradient>
+        <linearGradient id="hornStemGrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stop-color="#C09000"/>
+          <stop offset="45%"  stop-color="#FFD828"/>
+          <stop offset="100%" stop-color="#C09000"/>
+        </linearGradient>
+        <!-- Eye gradients -->
+        <linearGradient id="eyeIdle" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#3a2e00"/>
+          <stop offset="100%" stop-color="#1a1400"/>
+        </linearGradient>
+        <radialGradient id="eyeActiveBlue" cx="40%" cy="35%" r="65%">
+          <stop offset="0%"   stop-color="#BBEEFF"/>
+          <stop offset="28%"  stop-color="#33AAFF"/>
+          <stop offset="62%"  stop-color="#1166CC"/>
+          <stop offset="100%" stop-color="#042255"/>
+        </radialGradient>
+        <linearGradient id="steelGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#1e1a08"/>
+          <stop offset="100%" stop-color="#0a0800"/>
+        </linearGradient>
+        <!-- Glow filters -->
+        <filter id="eyeGlow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="9" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+        <filter id="hornGlow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="6"/>
+        </filter>
+        <!-- Clip paths for scan lines -->
+        <clipPath id="clipL">
+          <polygon points="52,248 178,248 198,290 178,332 52,332 32,290"/>
+        </clipPath>
+        <clipPath id="clipR">
+          <polygon points="242,248 368,248 388,290 368,332 242,332 222,290"/>
+        </clipPath>
+      </defs>
+
+      <!-- ══════════════════════════════
+           HORNS  — two pointed horns atop helmet
+           Left horn: angled up-left from ~x=148, y=60
+           Right horn: mirror at x=272
+      ══════════════════════════════ -->
+
+      <!-- LEFT HORN -->
+      <g class="horn">
+        <!-- Stem -->
+        <path d="M 138,60  C 136,46 134,34 130,22  L 122,10  L 114,18  L 120,30  C 124,40 127,52 130,62 Z"
+          fill="url(#hornGrad)" stroke="#8a6000" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <!-- Segmentation crease -->
+        <line x1="122" y1="32" x2="132" y2="30" stroke="#7a5400" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+        <!-- Side highlight -->
+        <path d="M 128,24 C 130,32 132,46 134,58" fill="none" stroke="#FFE566" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+      </g>
+
+      <!-- RIGHT HORN -->
+      <g class="horn">
+        <!-- Stem -->
+        <path d="M 282,60  C 284,46 286,34 290,22  L 298,10  L 306,18  L 300,30  C 296,40 293,52 290,62 Z"
+          fill="url(#hornGrad)" stroke="#8a6000" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <!-- Segmentation crease -->
+        <line x1="298" y1="32" x2="288" y2="30" stroke="#7a5400" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+        <!-- Side highlight -->
+        <path d="M 292,24 C 290,32 288,46 286,58" fill="none" stroke="#FFE566" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+      </g>
+
+      <!-- ══════════════════════════════
+           MAIN HEAD SHELL  (shifted down 100px vs original)
+      ══════════════════════════════ -->
+      <polygon points="60,150 360,150 400,220 420,340 400,480 340,530 80,530 20,480 0,340 20,220"
+        fill="url(#panelGrad)" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.3"/>
+
+      <!-- Top crest ridge -->
+      <polygon points="190,120 230,120 245,155 175,155" fill="#1a1500" stroke="#FFD000" stroke-width="1" stroke-opacity="0.5"/>
+      <line x1="210" y1="120" x2="210" y2="155" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.6"/>
+
+      <!-- Side ear vents LEFT -->
+      <rect x="0" y="250" width="22" height="80" rx="2" fill="#0d0b00" stroke="#FFD000" stroke-width="1" stroke-opacity="0.4"/>
+      <line x1="6"  y1="265" x2="16" y2="265" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="6"  y1="278" x2="16" y2="278" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="6"  y1="291" x2="16" y2="291" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="6"  y1="304" x2="16" y2="304" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="6"  y1="317" x2="16" y2="317" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+
+      <!-- Side ear vents RIGHT -->
+      <rect x="398" y="250" width="22" height="80" rx="2" fill="#0d0b00" stroke="#FFD000" stroke-width="1" stroke-opacity="0.4"/>
+      <line x1="404" y1="265" x2="414" y2="265" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="404" y1="278" x2="414" y2="278" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="404" y1="291" x2="414" y2="291" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="404" y1="304" x2="414" y2="304" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <line x1="404" y1="317" x2="414" y2="317" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+
+      <!-- Forehead panel -->
+      <polygon points="130,155 290,155 320,210 100,210"
+        fill="#141100" stroke="#FFD000" stroke-width="1" stroke-opacity="0.25"/>
+
+      <!-- Forehead rivets -->
+      <circle cx="140" cy="180" r="3.5" fill="#222" stroke="#FFD000" stroke-width="1" stroke-opacity="0.5"/>
+      <circle cx="280" cy="180" r="3.5" fill="#222" stroke="#FFD000" stroke-width="1" stroke-opacity="0.5"/>
+      <circle cx="210" cy="168" r="3.5" fill="#222" stroke="#FFD000" stroke-width="1" stroke-opacity="0.5"/>
+
+      <!-- Autobot symbol -->
+      <g transform="translate(183,160) scale(0.78)">
+        <polygon points="44,2 86,24 86,72 44,94 2,72 2,24" fill="none" stroke="#FFD000" stroke-width="3" opacity="0.8"/>
+        <rect x="10" y="20" width="68" height="54" rx="3" fill="#FFD000" opacity="0.65"/>
+        <rect x="17" y="28" width="15" height="11" rx="2" fill="#1a1200" opacity="0.9"/>
+        <rect x="56" y="28" width="15" height="11" rx="2" fill="#1a1200" opacity="0.9"/>
+        <rect x="36" y="39" width="16" height="6"  rx="1" fill="#1a1200" opacity="0.7"/>
+        <rect x="14" y="50" width="60" height="9"  rx="2" fill="#1a1200" opacity="0.85"/>
+        <polygon points="22,59 16,74 30,65" fill="#FFD000" opacity="0.85"/>
+        <polygon points="66,59 72,74 58,65" fill="#FFD000" opacity="0.85"/>
+      </g>
+
+      <!-- Brow ridges -->
+      <polygon points="42,230 180,230 200,248 30,248" fill="#1a1500" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+      <polygon points="378,230 240,230 220,248 390,248" fill="#1a1500" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.5"/>
+
+      <!-- ══ LEFT EYE VISOR ══ -->
+      <polygon points="30,248 190,248 208,290 190,332 30,332 12,290"
+        fill="#0a0800" stroke="#FFD000" stroke-width="2" stroke-opacity="0.4"/>
+      <polygon id="eyeL" class="eye-visor"
+        points="48,258 178,258 196,290 178,322 48,322 30,290"
+        fill="url(#eyeIdle)" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.6"/>
+      <!-- Detail lines -->
+      <line x1="70"  y1="258" x2="48"  y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.15"/>
+      <line x1="100" y1="258" x2="78"  y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.15"/>
+      <line x1="130" y1="258" x2="118" y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.1"/>
+      <line x1="160" y1="258" x2="158" y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.1"/>
+      <line x1="38"  y1="274" x2="202" y2="274" stroke="#FFD000" stroke-width="1" stroke-opacity="0.12"/>
+      <line x1="30"  y1="290" x2="208" y2="290" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.2" class="accent-line"/>
+      <line x1="38"  y1="306" x2="202" y2="306" stroke="#FFD000" stroke-width="1" stroke-opacity="0.12"/>
+      <!-- Pupil slit -->
+      <rect id="pupilL" x="98" y="270" width="20" height="40" rx="2" fill="#33AAFF" opacity="0.08"/>
+      <!-- Scan line -->
+      <rect class="scan-line" clip-path="url(#clipL)" x="10" y="286" width="210" height="8" fill="#33AAFF" opacity="0.7"/>
+      <!-- Blue glow overlay on wake -->
+      <polygon class="eye-glow-el"
+        points="48,258 178,258 196,290 178,322 48,322 30,290"
+        fill="#33AAFF" opacity="0.18" filter="url(#eyeGlow)"/>
+
+      <!-- ══ RIGHT EYE VISOR ══ -->
+      <polygon points="390,248 230,248 212,290 230,332 390,332 408,290"
+        fill="#0a0800" stroke="#FFD000" stroke-width="2" stroke-opacity="0.4"/>
+      <polygon id="eyeR" class="eye-visor"
+        points="372,258 242,258 224,290 242,322 372,322 390,290"
+        fill="url(#eyeIdle)" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.6"/>
+      <line x1="350" y1="258" x2="372" y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.15"/>
+      <line x1="320" y1="258" x2="342" y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.15"/>
+      <line x1="290" y1="258" x2="302" y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.1"/>
+      <line x1="260" y1="258" x2="262" y2="322" stroke="#FFD000" stroke-width="0.5" stroke-opacity="0.1"/>
+      <line x1="382" y1="274" x2="218" y2="274" stroke="#FFD000" stroke-width="1" stroke-opacity="0.12"/>
+      <line x1="390" y1="290" x2="212" y2="290" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.2" class="accent-line"/>
+      <line x1="382" y1="306" x2="218" y2="306" stroke="#FFD000" stroke-width="1" stroke-opacity="0.12"/>
+      <rect id="pupilR" x="302" y="270" width="20" height="40" rx="2" fill="#33AAFF" opacity="0.08"/>
+      <rect class="scan-line" clip-path="url(#clipR)" x="200" y="286" width="210" height="8" fill="#33AAFF" opacity="0.7"/>
+      <polygon class="eye-glow-el"
+        points="372,258 242,258 224,290 242,322 372,322 390,290"
+        fill="#33AAFF" opacity="0.18" filter="url(#eyeGlow)"/>
+
+      <!-- Nose bridge -->
+      <rect x="196" y="332" width="28" height="20" rx="2" fill="#0e0c00" stroke="#FFD000" stroke-width="1" stroke-opacity="0.3"/>
+      <line x1="210" y1="335" x2="210" y2="349" stroke="#FFD000" stroke-width="1" stroke-opacity="0.4"/>
+
+      <!-- Cheekbone panels LEFT -->
+      <polygon points="30,340 150,340 165,370 140,400 25,400 15,370"
+        fill="#100e00" stroke="#FFD000" stroke-width="1" stroke-opacity="0.2"/>
+      <line x1="40" y1="358" x2="145" y2="358" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.2"/>
+      <polygon points="60,362 75,354 90,362 90,378 75,386 60,378"
+        fill="none" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.25"/>
+
+      <!-- Cheekbone panels RIGHT -->
+      <polygon points="390,340 270,340 255,370 280,400 395,400 405,370"
+        fill="#100e00" stroke="#FFD000" stroke-width="1" stroke-opacity="0.2"/>
+      <line x1="380" y1="358" x2="275" y2="358" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.2"/>
+      <polygon points="360,362 345,354 330,362 330,378 345,386 360,378"
+        fill="none" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.25"/>
+
+      <!-- Mouth / Speaker grille -->
+      <rect x="120" y="400" width="180" height="72" rx="4"
+        fill="#0a0800" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.35"/>
+      <rect id="sb0" class="speaker-bar" x="132" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb1" class="speaker-bar" x="150" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb2" class="speaker-bar" x="168" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb3" class="speaker-bar" x="186" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb4" class="speaker-bar" x="204" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb5" class="speaker-bar" x="222" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb6" class="speaker-bar" x="240" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb7" class="speaker-bar" x="258" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <rect id="sb8" class="speaker-bar" x="276" y="416" width="12" height="40" rx="1" fill="#FFD000" opacity="0.15"/>
+      <!-- Mouth rivets -->
+      <circle cx="126" cy="406" r="3" fill="#1a1600" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.5"/>
+      <circle cx="294" cy="406" r="3" fill="#1a1600" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.5"/>
+      <circle cx="126" cy="466" r="3" fill="#1a1600" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.5"/>
+      <circle cx="294" cy="466" r="3" fill="#1a1600" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.5"/>
+
+      <!-- Chin plate -->
+      <polygon points="90,480 330,480 315,530 105,530"
+        fill="#0e0c00" stroke="#FFD000" stroke-width="1" stroke-opacity="0.2"/>
+      <line x1="150" y1="498" x2="270" y2="498" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.25"/>
+      <line x1="160" y1="510" x2="260" y2="510" stroke="#FFD000" stroke-width="1" stroke-opacity="0.15"/>
+      <line x1="170" y1="520" x2="250" y2="520" stroke="#FFD000" stroke-width="0.8" stroke-opacity="0.12"/>
+
+      <!-- Battle damage -->
+      <line x1="55"  y1="270" x2="75"  y2="285" stroke="#FFD000" stroke-width="0.6" stroke-opacity="0.15" transform="rotate(-20,65,277)"/>
+      <line x1="350" y1="360" x2="375" y2="375" stroke="#FFD000" stroke-width="0.6" stroke-opacity="0.12"/>
+      <line x1="352" y1="363" x2="377" y2="378" stroke="#FFD000" stroke-width="0.3" stroke-opacity="0.08"/>
+
+      <!-- Neck connector -->
+      <rect x="150" y="530" width="120" height="28" rx="3"
+        fill="#0d0b00" stroke="#FFD000" stroke-width="1" stroke-opacity="0.25"/>
+      <line x1="170" y1="538" x2="170" y2="550" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.4"/>
+      <line x1="195" y1="538" x2="195" y2="550" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.4"/>
+      <line x1="220" y1="538" x2="220" y2="550" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.4"/>
+      <line x1="245" y1="538" x2="245" y2="550" stroke="#FFD000" stroke-width="1.5" stroke-opacity="0.4"/>
+
+      <!-- Brow chevrons (active flicker) -->
+      <polyline class="chevron-el" points="90,236 110,242 130,236"
+        fill="none" stroke="#FFD000" stroke-width="2" stroke-opacity="0.7" stroke-linejoin="round"/>
+      <polyline class="chevron-el" points="290,236 310,242 330,236"
+        fill="none" stroke="#FFD000" stroke-width="2" stroke-opacity="0.7" stroke-linejoin="round"/>
+
+    </svg>
+  </div>
+
+  <!-- Status area -->
+  <div class="status-wrap">
+    <div class="status-word" id="statusWord">STANDBY</div>
+    <div class="status-sub"  id="statusSub">say "bumblebee" to activate</div>
+
+    <div style="display:flex;gap:20px;align-items:center;margin-top:8px;">
+      <div class="det-strip">
+        <div class="det-dot" id="d0"></div>
+        <div class="det-dot" id="d1"></div>
+        <div class="det-dot" id="d2"></div>
+        <div class="det-dot" id="d3"></div>
+        <div class="det-dot" id="d4"></div>
+        <div class="det-dot" id="d5"></div>
+        <div class="det-dot" id="d6"></div>
+        <div class="det-dot" id="d7"></div>
+        <span class="det-count" id="detCount">0 DETECTIONS</span>
+      </div>
+      <div class="cd-wrap" id="cdWrap">
+        <svg id="cdSvg" viewBox="0 0 56 56" width="56" height="56">
+          <circle id="cdArc" cx="28" cy="28" r="24"/>
+        </svg>
+        <div class="cd-n" id="cdN">3</div>
+      </div>
+    </div>
+
+    <div class="energy-row" id="energyRow"></div>
+  </div>
+</div>
+
+<footer>
+  <div class="ws-badge" id="wsBadge">
+    <div class="ws-dot"></div>
+    <span id="wsLbl">DEMO MODE</span>
+  </div>
+  <span>OPENWAKEWORD · bumblebee · linux/raspberry-pi</span>
+  <button class="demo-btn" onclick="triggerWake()">▶ TRIGGER DEMO</button>
+</footer>
+
+<script>
+// ─── Energy bars ──────────────────────────────────────────
+const energyRow = document.getElementById('energyRow');
+for (let i = 0; i < 36; i++) {
+  const b = document.createElement('div');
+  b.className = 'e-bar'; b.id = 'eb'+i; b.style.height = '3px';
+  energyRow.appendChild(b);
+}
+let eBarTimer = null;
+function animEnergy(active) {
+  clearInterval(eBarTimer);
+  eBarTimer = setInterval(() => {
+    for (let i = 0; i < 36; i++) {
+      const b = document.getElementById('eb'+i);
+      b.style.height  = (active ? 4+Math.random()*22 : 2+Math.random()*4) + 'px';
+      b.style.opacity = active ? 0.5+Math.random()*0.5 : 0.12+Math.random()*0.08;
+    }
+  }, active ? 70 : 400);
+}
+animEnergy(false);
+
+// ─── Speaker bars ─────────────────────────────────────────
+let sbTimer = null;
+const SB_BASE_Y = 416, SB_FULL = 40;
+function animSpeaker(active) {
+  clearInterval(sbTimer);
+  sbTimer = setInterval(() => {
+    for (let i = 0; i < 9; i++) {
+      const bar = document.getElementById('sb'+i);
+      const h   = active ? 8+Math.random()*30 : 38+Math.random()*2;
+      const op  = active ? 0.6+Math.random()*0.4 : 0.13+Math.random()*0.05;
+      const y   = active ? SB_BASE_Y + (SB_FULL-h)/2 : SB_BASE_Y+1;
+      bar.setAttribute('height', h);
+      bar.setAttribute('y', y);
+      bar.setAttribute('opacity', op);
+    }
+  }, active ? 80 : 600);
+}
+animSpeaker(false);
+
+// ─── Eyes ─────────────────────────────────────────────────
+function setEyes(active) {
+  // BLUE when active, dark yellow when idle
+  const fill  = active ? 'url(#eyeActiveBlue)' : 'url(#eyeIdle)';
+  const pOp   = active ? '0.85' : '0.08';
+  const sOp   = active ? '1'    : '0.6';
+  document.getElementById('eyeL').setAttribute('fill', fill);
+  document.getElementById('eyeR').setAttribute('fill', fill);
+  document.getElementById('pupilL').setAttribute('opacity', pOp);
+  document.getElementById('pupilR').setAttribute('opacity', pOp);
+  document.getElementById('eyeL').setAttribute('stroke-opacity', sOp);
+  document.getElementById('eyeR').setAttribute('stroke-opacity', sOp);
+}
+
+function doBlink() {
+  document.getElementById('eyeL').setAttribute('fill', 'url(#eyeIdle)');
+  document.getElementById('eyeR').setAttribute('fill', 'url(#eyeIdle)');
+  setTimeout(() => {
+    document.getElementById('eyeL').setAttribute('fill', 'url(#eyeActiveBlue)');
+    document.getElementById('eyeR').setAttribute('fill', 'url(#eyeActiveBlue)');
+  }, 80);
+}
+
+let idleBlinkTimer = null;
+function scheduleIdleBlink() {
+  idleBlinkTimer = setTimeout(() => {
+    if (!wakeActive) {
+      const eL = document.getElementById('eyeL');
+      const eR = document.getElementById('eyeR');
+      eL.setAttribute('fill','#100c00');
+      eR.setAttribute('fill','#100c00');
+      setTimeout(() => {
+        eL.setAttribute('fill','url(#eyeIdle)');
+        eR.setAttribute('fill','url(#eyeIdle)');
+        scheduleIdleBlink();
+      }, 120);
+    } else {
+      scheduleIdleBlink();
+    }
+  }, 3000 + Math.random()*4000);
+}
+scheduleIdleBlink();
+
+// ─── State ────────────────────────────────────────────────
+let wakeActive = false, sleepTimer = null, blinkTimer = null, cdInt = null, detCount = 0;
+const WAKE_MS = 3000;
+
+// ─── Countdown ──────────────────────────────────────────
+const cdArc = document.getElementById('cdArc');
+const cdN   = document.getElementById('cdN');
+const cdWrap= document.getElementById('cdWrap');
+const CIRCUM = 150;
+
+function startCd() {
+  cdWrap.classList.add('show');
+  let elapsed = 0;
+  cdInt = setInterval(() => {
+    elapsed += 50;
+    cdArc.style.strokeDashoffset = CIRCUM*(elapsed/WAKE_MS);
+    cdN.textContent = Math.max(0, Math.ceil((WAKE_MS-elapsed)/1000));
+    if (elapsed >= WAKE_MS) clearInterval(cdInt);
+  }, 50);
+}
+function stopCd() {
+  clearInterval(cdInt);
+  cdArc.style.strokeDashoffset = CIRCUM;
+  cdWrap.classList.remove('show');
+  cdN.textContent = '3';
+}
+
+// ─── Detection dots ───────────────────────────────────────
+function updateDots() {
+  const n = Math.min(detCount, 8);
+  for (let i = 0; i < 8; i++)
+    document.getElementById('d'+i).classList.toggle('lit', i < n);
+  const el = document.getElementById('detCount');
+  el.textContent = detCount+' DETECTION'+(detCount!==1?'S':'');
+  el.classList.toggle('active', detCount > 0);
+}
+
+// ─── Wake ─────────────────────────────────────────────────
+function triggerWake() {
+  detCount++; updateDots();
+
+  const fw = document.getElementById('faceWrap');
+  fw.classList.remove('shake'); void fw.offsetWidth; fw.classList.add('shake');
+  setTimeout(() => fw.classList.remove('shake'), 500);
+
+  if (wakeActive) {
+    clearTimeout(sleepTimer); stopCd(); startCd();
+    doBlink();
+    sleepTimer = setTimeout(goSleep, WAKE_MS);
+    return;
+  }
+
+  wakeActive = true;
+  fw.classList.add('alert');
+  setEyes(true);
+
+  // Rapid blink burst — 4 blue flashes
+  let b = 0;
+  blinkTimer = setInterval(() => { doBlink(); b++; if (b>=4) clearInterval(blinkTimer); }, 140);
+
+  document.getElementById('statusWord').className = 'status-word active';
+  document.getElementById('statusWord').textContent = 'BUMBLEBEE!';
+  document.getElementById('statusSub').className = 'status-sub active';
+  document.getElementById('statusSub').textContent = 'wake word confirmed · listening';
+  document.getElementById('hdrStatus').textContent = 'ACTIVE';
+
+  animEnergy(true);
+  animSpeaker(true);
+  startCd();
+  sleepTimer = setTimeout(goSleep, WAKE_MS);
+}
+
+function goSleep() {
+  wakeActive = false;
+  clearInterval(blinkTimer);
+  const fw = document.getElementById('faceWrap');
+
+  doBlink();
+  setTimeout(() => {
+    doBlink();
+    setTimeout(() => {
+      fw.classList.remove('alert');
+      setEyes(false);
+    }, 180);
+  }, 200);
+
+  stopCd(); animEnergy(false); animSpeaker(false);
+
+  document.getElementById('statusWord').className = 'status-word';
+  document.getElementById('statusWord').textContent = 'STANDBY';
+  document.getElementById('statusSub').className = 'status-sub';
+  document.getElementById('statusSub').textContent = 'say "bumblebee" to activate';
+  document.getElementById('hdrStatus').textContent = 'STANDBY';
+}
+
+// ─── WebSocket ────────────────────────────────────────────
+function connectWS() {
+  const ws = new WebSocket('ws://localhost:8767');
+  ws.onopen  = () => { document.getElementById('wsBadge').classList.add('on'); document.getElementById('wsLbl').textContent='LIVE · OPENWAKEWORD'; };
+  ws.onmessage = () => triggerWake();
+  ws.onclose = () => { document.getElementById('wsBadge').classList.remove('on'); document.getElementById('wsLbl').textContent='DEMO MODE'; setTimeout(connectWS,3000); };
+  ws.onerror = () => ws.close();
+}
+connectWS();
+</script>
+</body>
+</html>
