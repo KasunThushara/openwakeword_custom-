@@ -1,16 +1,22 @@
 """
-step2_get_negatives.py
-═══════════════════════
-Downloads negative (non-wake-word) speech data from LibriSpeech
-via HuggingFace datasets in STREAMING mode.
+step2_get_negatives.py  (REWRITTEN — TTS-only negatives)
+══════════════════════════════════════════════════════════
 
-– No full dataset download required (saves ~6 GB)
-– Streams only what we need, clips to 3-second chunks at 16 kHz
-– Also generates adversarial negatives: words that sound like
-  "bumblebee" but aren't (humble, crumble, stumble …)
+ROOT CAUSE FIX
+══════════════
+The previous version used LibriSpeech (real recorded speech) as negatives
+while positives were Piper TTS. The Google embedding backbone puts TTS and
+real speech in DIFFERENT regions of embedding space. The classifier learned:
+  "TTS-style embeddings  →  bumblebee = 1"
+  "Real-speech embeddings  →  bumblebee = 0"
 
-Expected run time:  ~10–20 minutes  (depends on internet speed)
-Disk used:          ~500 MB for 3 000 clips
+This broke live inference because your real voice → 0 regardless of what
+you said.
+
+The fix: generate negatives using the SAME Piper TTS voices as the positives,
+but with many different words and phrases. Now both classes look like TTS in
+the embedding space, so the classifier is forced to learn the actual word
+"bumblebee" rather than the recording style.
 """
 
 import io
@@ -25,134 +31,110 @@ from tqdm import tqdm
 
 import config
 
-# 3-second chunks cut from LibriSpeech utterances
-CHUNK_SECONDS = 3
+TARGET_SECONDS = 1.5
+TARGET_SAMPLES = int(config.SAMPLE_RATE * TARGET_SECONDS)
 
+# ── Negative phrases: diverse English covering many phonemes ──────
+# These must NOT contain "bumblebee" or "bumble bee".
+# They cover common home-assistant utterances, random speech, numbers,
+# and phonemes that partially overlap with "bumblebee" to train harder.
+NEGATIVE_PHRASES = [
+    # Similar-sounding words (hardest negatives)
+    "bumble", "humble", "stumble", "crumble", "tumble",
+    "rumble", "mumble", "grumble", "jumble", "fumble",
+    "bumpy ride", "bubble tea", "lumber yard", "number three",
+    "come on baby", "bumper car", "something funny",
 
-# ── Part A: stream LibriSpeech clean validation set ───────────────
-def download_librispeech_negatives() -> None:
-    print("\n[Step 2-A] Streaming LibriSpeech negatives …")
-    print(f"  Target: {config.N_NEGATIVE_CLIPS} clips  →  {config.NEGATIVE_DIR}")
+    # Common home assistant commands
+    "turn on the lights", "turn off the lights",
+    "set a timer for five minutes", "play some music",
+    "what is the weather today", "call mom",
+    "add milk to the shopping list", "set an alarm",
+    "volume up", "volume down", "pause the music",
+    "next song", "skip this", "stop",
+    "turn on the fan", "turn off the tv",
+    "open the garage", "lock the door",
+    "dim the lights", "brighten the lights",
 
-    try:
-        from datasets import Audio, Features, Value, load_dataset
-    except ImportError:
-        raise SystemExit("✗ Install datasets:  pip install datasets")
+    # Numbers and letters
+    "one two three four five",
+    "six seven eight nine ten",
+    "alpha bravo charlie delta",
+    "a b c d e f g",
 
-    existing = list(config.NEGATIVE_DIR.glob("neg_*.wav"))
-    if len(existing) >= config.N_NEGATIVE_CLIPS:
-        print(f"  ↷ Already have {len(existing)} negative clips – skipping download.")
-        return
+    # Common words and short phrases
+    "hello", "goodbye", "yes", "no", "please", "thank you",
+    "good morning", "good night", "good afternoon",
+    "how are you", "fine thank you",
+    "the quick brown fox jumps over the lazy dog",
+    "to be or not to be that is the question",
+    "all systems are operational",
+    "the temperature is twenty degrees",
+    "it is currently cloudy with a chance of rain",
+    "your package has been delivered",
+    "meeting starts in ten minutes",
+    "battery level is at eighty percent",
+    "connection established",
+    "downloading update",
+    "search results for your query",
+    "playing next track",
+    "lights are now off",
+    "alarm set for seven am",
 
-    start = len(existing)
-    count = start
-
-    # librispeech validation-clean is ~340 MB of audio, streamed on demand
-    features = Features(
-        {
-            "file": Value("string"),
-            "audio": Audio(sampling_rate=None, decode=False),
-            "text": Value("string"),
-            "speaker_id": Value("int64"),
-            "chapter_id": Value("int64"),
-            "id": Value("string"),
-        }
-    )
-
-    ds = load_dataset(
-        "openslr/librispeech_asr",
-        "clean",
-        split="validation",
-        streaming=True,
-        features=features,
-    )
-
-    chunk_samples = config.SAMPLE_RATE * CHUNK_SECONDS
-    pbar = tqdm(total=config.N_NEGATIVE_CLIPS - start, unit="clip")
-
-    for example in ds:
-        if count >= config.N_NEGATIVE_CLIPS:
-            break
-
-        audio_data = example["audio"]
-        if isinstance(audio_data, dict) and "array" in audio_data:
-            audio = np.array(audio_data["array"], dtype=np.float32)
-            sr = audio_data["sampling_rate"]
-        elif isinstance(audio_data, dict) and "bytes" in audio_data:
-            buf = io.BytesIO(audio_data["bytes"])
-            audio, sr = sf.read(buf)
-            audio = audio.astype(np.float32)
-        else:
-            raise RuntimeError("Unsupported audio format from LibriSpeech stream")
-
-        if sr != config.SAMPLE_RATE:
-            audio = librosa.resample(audio, orig_sr=sr, target_sr=config.SAMPLE_RATE)
-
-        # Split the utterance into 3-second chunks
-        for j in range(len(audio) // chunk_samples):
-            if count >= config.N_NEGATIVE_CLIPS:
-                break
-            chunk = audio[j * chunk_samples : (j + 1) * chunk_samples]
-
-            out = config.NEGATIVE_DIR / f"neg_{count:06d}.wav"
-            sf.write(str(out), chunk, config.SAMPLE_RATE, subtype="PCM_16")
-            count += 1
-            pbar.update(1)
-
-    pbar.close()
-    print(f"  ✓ Saved {count} negative clips")
-
-
-# ── Part B: adversarial negatives (similar-sounding words) ────────
-# These are the words most likely to cause false positives because
-# they share phonemes with "bumblebee".  Generating them explicitly
-# and labelling as NEGATIVE forces the model to discriminate.
-ADVERSARIAL_PHRASES = [
-    "bumble",
-    "humble bee",
-    "stumble",
-    "crumble",
-    "tumble",
-    "rumble",
-    "mumble",
-    "grumble",
-    "jumble",
-    "bumpy",
-    "bubble",
-    "bumper",
-    "lumber",
-    "number three",
-    "come on baby",          # shares the /b/ /iː/ pattern
+    # Phonetically diverse single words
+    "elephant", "crocodile", "refrigerator", "university",
+    "computer", "telephone", "microphone", "amplifier",
+    "knowledge", "adventure", "tomorrow", "yesterday",
+    "together", "whenever", "whatever", "somewhere",
+    "everything", "something", "anything", "nothing",
+    "basketball", "waterfall", "thunderstorm", "underground",
 ]
 
-N_ADVERSARIAL = 300    # 300 clips, ~20 per phrase
+
+def pad_to_target(audio: np.ndarray) -> np.ndarray:
+    """Same padding as step1: surround with ambient noise to reach 1.5s."""
+    n = len(audio)
+    if n >= TARGET_SAMPLES:
+        start = (n - TARGET_SAMPLES) // 2
+        return audio[start : start + TARGET_SAMPLES].copy()
+    gap  = TARGET_SAMPLES - n
+    pre  = random.randint(gap // 4, 3 * gap // 4)
+    post = gap - pre
+    amp  = max(float(np.abs(audio).mean()) * random.uniform(0.02, 0.08), 5e-4)
+    return np.concatenate([
+        (np.random.randn(pre)  * amp).astype(np.float32),
+        audio.astype(np.float32),
+        (np.random.randn(post) * amp).astype(np.float32),
+    ])
 
 
-def generate_adversarial_negatives() -> None:
-    """Use piper-tts to generate clips of similar-sounding words."""
+def generate_tts_negatives() -> None:
+    """Generate negative clips using Piper TTS (same voices as step1)."""
     try:
         from piper.voice import PiperVoice
     except ImportError:
-        print("  ⚠ piper-tts not available – skipping adversarial negatives.")
-        return
+        raise SystemExit("✗ pip install piper-tts")
 
-    voice_files = list(config.VOICES_DIR.glob("*.onnx"))
+    voice_files = sorted(config.VOICES_DIR.glob("*.onnx"))
     if not voice_files:
-        print("  ⚠ No Piper voices found in voices/ – run step1 first.")
+        raise SystemExit("✗ No voices found in voices/  — run step1 first.")
+
+    print(f"\n[Step 2] Generating {config.N_NEGATIVE_CLIPS} TTS negative clips …")
+    print(f"  Voices : {[v.stem for v in voice_files]}")
+    print(f"  Phrases: {len(NEGATIVE_PHRASES)} different phrases")
+    print(f"  Output : {config.NEGATIVE_DIR}\n")
+
+    existing = list(config.NEGATIVE_DIR.glob("neg_*.wav"))
+    start    = len(existing)
+    if start >= config.N_NEGATIVE_CLIPS:
+        print(f"  ↷ Already have {start} negatives — skipping.")
         return
 
-    print(f"\n[Step 2-B] Generating {N_ADVERSARIAL} adversarial negative clips …")
     voices = [PiperVoice.load(str(p)) for p in voice_files]
 
-    existing_adv = list(config.NEGATIVE_DIR.glob("adv_*.wav"))
-    start = len(existing_adv)
-    if start >= N_ADVERSARIAL:
-        print(f"  ↷ Already have {start} adversarial clips – skipping.")
-        return
-
-    for i in tqdm(range(start, N_ADVERSARIAL), unit="clip"):
+    for i in tqdm(range(start, config.N_NEGATIVE_CLIPS), unit="clip"):
         voice  = random.choice(voices)
-        phrase = random.choice(ADVERSARIAL_PHRASES)
+        phrase = random.choice(NEGATIVE_PHRASES)
 
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wf:
@@ -170,22 +152,36 @@ def generate_adversarial_negatives() -> None:
         if src_sr != config.SAMPLE_RATE:
             audio = librosa.resample(audio, orig_sr=src_sr, target_sr=config.SAMPLE_RATE)
 
-        out = config.NEGATIVE_DIR / f"adv_{i:05d}.wav"
+        audio = pad_to_target(audio)
+
+        out = config.NEGATIVE_DIR / f"neg_{i:06d}.wav"
         sf.write(str(out), audio, config.SAMPLE_RATE, subtype="PCM_16")
 
-    total_neg = len(list(config.NEGATIVE_DIR.glob("*.wav")))
-    print(f"  ✓ Adversarial negatives done. Total negatives: {total_neg}")
+    print(f"\n✓ Done – {config.N_NEGATIVE_CLIPS} negative clips in {config.NEGATIVE_DIR}")
 
 
-# ── Main ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 60)
-    print("  STEP 2 – Download / generate negative data")
+    print("  STEP 2 – Generate TTS negative clips  (REWRITTEN)")
     print("=" * 60)
+    print("""
+  KEY CHANGE: negatives are now generated with the SAME Piper TTS
+  voices as the positive clips.  Both classes now live in the same
+  TTS embedding region, so the classifier must learn the actual word
+  'bumblebee' rather than 'is this TTS or real speech?'
+""")
 
-    download_librispeech_negatives()
-    generate_adversarial_negatives()
+    # Remove any old LibriSpeech negatives (different embedding style)
+    old_negs = list(config.NEGATIVE_DIR.glob("neg_*.wav"))
+    if old_negs:
+        print(f"  Removing {len(old_negs)} old negatives …")
+        for f in old_negs:
+            f.unlink()
+    old_adv = list(config.NEGATIVE_DIR.glob("adv_*.wav"))
+    if old_adv:
+        print(f"  Removing {len(old_adv)} old adversarial negatives …")
+        for f in old_adv:
+            f.unlink()
 
-    total = len(list(config.NEGATIVE_DIR.glob("*.wav")))
-    print(f"\n✓ Done – {total} total negative clips in {config.NEGATIVE_DIR}")
-    print("\nNext: run  step3_extract_features.py")
+    generate_tts_negatives()
+    print("\nNext: delete features/  then run step3_extract_features.py")
