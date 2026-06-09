@@ -51,7 +51,8 @@ class WakeWordModel(nn.Module):
             nn.Linear(hidden_size, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
-            nn.Sigmoid(),
+            # NO SIGMOID HERE – BCEWithLogitsLoss applies sigmoid internally
+            # Sigmoid will be added during ONNX export for inference
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -109,8 +110,6 @@ def train(model: WakeWordModel, train_dl, val_dl) -> WakeWordModel:
     pos_weight = torch.tensor([3.0])   # tune if you get too many false positives
     criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
-    # Replace the final Sigmoid with a raw output for BCEWithLogitsLoss
-    # (Sigmoid is kept for ONNX export / inference)
     optimizer  = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
     scheduler  = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=config.EPOCHS, eta_min=1e-5
@@ -129,8 +128,8 @@ def train(model: WakeWordModel, train_dl, val_dl) -> WakeWordModel:
             y_batch = y_batch.unsqueeze(1).to(device)
 
             optimizer.zero_grad()
-            # Forward pass: use raw logits for loss (remove sigmoid temporarily)
-            logits = model.net[:-1](X_batch)        # all layers except final Sigmoid
+            # Forward pass: model outputs raw logits (no sigmoid)
+            logits = model(X_batch)
             loss   = criterion(logits, y_batch)
             loss.backward()
             optimizer.step()
@@ -147,7 +146,7 @@ def train(model: WakeWordModel, train_dl, val_dl) -> WakeWordModel:
             for X_batch, y_batch in val_dl:
                 X_batch = X_batch.to(device)
                 y_batch = y_batch.unsqueeze(1).to(device)
-                logits  = model.net[:-1](X_batch)
+                logits  = model(X_batch)
                 loss    = criterion(logits, y_batch)
                 va_loss += loss.item() * len(X_batch)
                 preds    = (torch.sigmoid(logits) >= 0.5).float()
@@ -194,9 +193,9 @@ def train(model: WakeWordModel, train_dl, val_dl) -> WakeWordModel:
 # ═══════════════════════════════════════════════════════════════════
 def export_onnx(model: WakeWordModel) -> Path:
     """
-    Export the trained model to ONNX.
+    Export the trained model to ONNX with Sigmoid applied for inference.
     Input shape:  (batch, WINDOW_FRAMES, EMBEDDING_DIM)
-    Output shape: (batch, 1)
+    Output shape: (batch, 1)  — sigmoid-applied scores [0, 1]
     """
     try:
         import onnx
@@ -207,10 +206,20 @@ def export_onnx(model: WakeWordModel) -> Path:
     model.eval()
     out_path = config.MODEL_DIR / f"{config.MODEL_NAME}.onnx"
 
+    # Wrap the model with Sigmoid for export
+    class ModelWithSigmoid(nn.Module):
+        def __init__(self, base_model):
+            super().__init__()
+            self.base = base_model
+        def forward(self, x):
+            return torch.sigmoid(self.base(x))
+
+    model_with_sig = ModelWithSigmoid(model)
+
     dummy = torch.randn(1, config.WINDOW_FRAMES, config.EMBEDDING_DIM)
 
     torch.onnx.export(
-        model,
+        model_with_sig,
         dummy,
         str(out_path),
         export_params=True,
@@ -236,7 +245,7 @@ def export_onnx(model: WakeWordModel) -> Path:
     print(f"\n  ✓ ONNX model saved: {out_path}")
     print(f"    Input  shape : {sess.get_inputs()[0].shape}")
     print(f"    Output shape : {sess.get_outputs()[0].shape}")
-    print(f"    Test score   : {score:.4f}  (random noise → should be near 0)")
+    print(f"    Test score   : {score:.4f}  (random noise → should be near 0.5)")
 
     return out_path
 
