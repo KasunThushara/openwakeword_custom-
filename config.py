@@ -24,18 +24,14 @@ WAKE_WORD = "bumblebee"
 # The model learns ALL of them – use phrases you'll actually speak.
 PHRASES = [
     "bumblebee",
-    "hey bumblebee",
-    "ok bumblebee",
-    "bumblebee please",
-    "bumble bee",          # two-word pronunciation some speakers use
 ]
 
 # ── Audio ──────────────────────────────────────────────────────────
 SAMPLE_RATE = 16_000       # Hz  – openWakeWord always uses 16 kHz
 
 # ── Data volumes ───────────────────────────────────────────────────
-N_POSITIVE_CLIPS = 5_000   # synthetic TTS clips  (aim for 5k minimum)
-N_NEGATIVE_CLIPS = 3_000   # from LibriSpeech streaming
+N_POSITIVE_CLIPS = 5000   # synthetic TTS clips  (aim for 5k minimum)
+N_NEGATIVE_CLIPS = 3000   # from LibriSpeech streaming
 
 # ── Embedding / model shape ────────────────────────────────────────
 # openWakeWord produces 96-dim embeddings every 80 ms.
@@ -47,7 +43,7 @@ EMBEDDING_DIM  = 96
 HIDDEN_SIZE    = 128
 BATCH_SIZE     = 256
 EPOCHS         = 60
-LEARNING_RATE  = 1e-3
+LEARNING_RATE  = 0.001
 VAL_SPLIT      = 0.15      # 15 % held out for validation
 
 # ── Output ─────────────────────────────────────────────────────────
