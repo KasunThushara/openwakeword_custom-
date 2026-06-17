@@ -1,0 +1,53 @@
+# ─── Generated data (mount as volumes at runtime) ─────────────────
+data/
+features/
+model/
+voices/
+
+# ─── Python ───────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ─── Virtual environments ─────────────────────────────────────────
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# ─── IDE / editor ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+
+# ─── OS files ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Git ─────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ─── Docker files (don't embed in image) ─────────────────────────
+Dockerfile
+docker-compose.yml
+.dockerignore
+DOCKER.md
+
+# ─── Logs / temp ─────────────────────────────────────────────────
+*.log
+*.tmp
+
+# ─── Test / dev ──────────────────────────────────────────────────
+.pytest_cache/
+tests/
+*.ipynb
+.ipynb_checkpoints/

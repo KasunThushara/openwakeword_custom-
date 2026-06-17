@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════════════════════
+#  Bumblebee Wake Word — Docker Compose
+#
+#  Two services:
+#
+#  trainer  — Flask web UI + all training scripts (no mic needed)
+#             docker compose up trainer
+#             http://localhost:5000
+#
+#  server   — WebSocket detection server (needs ReSpeaker mic)
+#             docker compose --profile detection up server
+#
+#  Both share the same image but different commands and volume mounts.
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────
+  #  TRAINER  —  Flask web UI + pipeline scripts
+  #  Use this to: run step1-4, monitor progress, configure settings
+  #  Mic NOT required.  Audio files are generated via Piper TTS.
+  # ─────────────────────────────────────────────────────────────────
+  trainer:
+    image: ${DOCKER_HUB_USER:-kasun}/bumblebee-wakeword:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bumblebee-trainer
+    command: python3 app.py
+    ports:
+      - "5000:5000"    # Flask web UI
+      - "8767:8767"    # WebSocket (for face animation in browser)
+    volumes:
+      # Mount generated directories so data persists across container restarts.
+      # Train once, keep the model forever — no need to rebuild the image.
+      - ./data:/app/data
+      - ./features:/app/features
+      - ./model:/app/model
+      - ./voices:/app/voices
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ─────────────────────────────────────────────────────────────────
+  #  SERVER  —  WebSocket detection server with ReSpeaker mic
+  #  Requires: trained model in ./model/
+  #  Requires: ReSpeaker XVF3800 plugged in
+  #
+  #  Start:  docker compose --profile detection up server
+  #  Stop:   docker compose --profile detection down
+  # ─────────────────────────────────────────────────────────────────
+  server:
+    image: ${DOCKER_HUB_USER:-kasun}/bumblebee-wakeword:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bumblebee-server
+    # Change --device to match your ReSpeaker index inside the container.
+    # Run:  docker compose run --rm server python3 step5_test.py --list-devices
+    command: python3 bumblebee_server.py --device respeaker --threshold 0.5
+    volumes:
+      - ./model:/app/model
+      - ./voices:/app/voices
+    # ── Audio device access ────────────────────────────────────────
+    # Gives the container access to the host's ALSA sound system.
+    # /dev/snd  → all ALSA sound devices (including ReSpeaker)
+    devices:
+      - /dev/snd:/dev/snd
+    # Add container user to the audio group so it can open /dev/snd
+    group_add:
+      - audio
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ALSA_CARD=Array           # hint to sounddevice: prefer ReSpeaker
+    # Use host network so the browser can connect to ws://localhost:8767
+    network_mode: host
+    profiles:
+      - detection    # only starts when you pass --profile detection
+    restart: unless-stopped
