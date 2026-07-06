@@ -107,8 +107,10 @@ COPY diagnose.py                ./
 COPY app.py                     ./
 COPY bumblebee_server.py        ./
 COPY bumblebee_face.html        ./
+COPY model/                     ./model/
+COPY model/                     ./default_model/
 
-RUN mkdir -p data/positive data/negative features model voices
+RUN mkdir -p data/positive data/negative features model voices default_model
 
 EXPOSE 5000
 EXPOSE 8767

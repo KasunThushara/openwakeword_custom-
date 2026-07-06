@@ -12,9 +12,10 @@ NEGATIVE_DIR  = DATA_DIR / "negative"
 FEATURES_DIR  = PROJECT_ROOT / "features"
 MODEL_DIR     = PROJECT_ROOT / "model"
 VOICES_DIR    = PROJECT_ROOT / "voices"
+DEFAULT_MODEL_DIR = PROJECT_ROOT / "default_model"
 
 # auto-create all dirs so scripts can be run in any order
-for _d in [POSITIVE_DIR, NEGATIVE_DIR, FEATURES_DIR, MODEL_DIR, VOICES_DIR]:
+for _d in [POSITIVE_DIR, NEGATIVE_DIR, FEATURES_DIR, MODEL_DIR, VOICES_DIR, DEFAULT_MODEL_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Wake word ──────────────────────────────────────────────────────

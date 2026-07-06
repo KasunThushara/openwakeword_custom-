@@ -18,6 +18,7 @@ Usage:
 import argparse
 import asyncio
 import json
+import shutil
 import time
 
 import sounddevice as sd
@@ -81,7 +82,13 @@ def resolve_device(device_arg):
 def build_model() -> Model:
     onnx_path = config.MODEL_DIR / f"{config.MODEL_NAME}.onnx"
     if not onnx_path.exists():
-        raise SystemExit(f"✗ Model not found: {onnx_path}\n  Run step4_train.py first.")
+        default_path = config.DEFAULT_MODEL_DIR / f"{config.MODEL_NAME}.onnx"
+        if default_path.exists():
+            config.MODEL_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(default_path, onnx_path)
+            print(f"[MODEL] Copied default model to {onnx_path}")
+        else:
+            raise SystemExit(f"✗ Model not found: {onnx_path}\n  Run step4_train.py first.")
 
     openwakeword.utils.download_models()
     print(f"[MODEL] Loading ONNX model: {onnx_path.name}")

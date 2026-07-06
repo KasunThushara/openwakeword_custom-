@@ -1,7 +1,6 @@
 # ─── Generated data (mount as volumes at runtime) ─────────────────
 data/
 features/
-model/
 voices/
 
 # ─── Python ───────────────────────────────────────────────────────

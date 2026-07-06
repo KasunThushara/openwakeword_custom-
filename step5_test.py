@@ -17,6 +17,7 @@ Usage
 """
 
 import argparse
+import shutil
 import time
 
 import numpy as np
@@ -69,8 +70,14 @@ def load_oww_model():
     """
     onnx_path = config.MODEL_DIR / f"{config.MODEL_NAME}.onnx"
     if not onnx_path.exists():
-        raise SystemExit(f"✗ Model not found: {onnx_path}\n"
-                         "  Run step4_train.py first.")
+        default_path = config.DEFAULT_MODEL_DIR / f"{config.MODEL_NAME}.onnx"
+        if default_path.exists():
+            config.MODEL_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(default_path, onnx_path)
+            print(f"  Copied default model to {onnx_path}")
+        else:
+            raise SystemExit(f"✗ Model not found: {onnx_path}\n"
+                             "  Run step4_train.py first.")
 
     import openwakeword
     from openwakeword.model import Model
