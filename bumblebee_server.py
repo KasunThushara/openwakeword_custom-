@@ -302,8 +302,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--device", default=None,
                         help="Audio input device index or partial name")
-    parser.add_argument("--threshold", type=float, default=0.5,
-                        help="Detection threshold 0–1 (default 0.5)")
+    parser.add_argument("--threshold", type=float, default=0.75,
+                        help="Detection threshold 0–1 (default 0.75)")
     parser.add_argument("--debounce", type=int, default=800,
                         help="Milliseconds between detected wake events (default 800)")
     parser.add_argument("--list-devices", action="store_true",

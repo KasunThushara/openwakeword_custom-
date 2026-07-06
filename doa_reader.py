@@ -26,7 +26,8 @@ import usb.core
 import usb.util
 
 VID_RESPEAKER = 0x2886
-PID_XVF3800   = 0x001A
+PID_XVF3800   = 0x001E       # reSpeaker Flex XVF3800 C16K6Ch
+PID_FALLBACKS = [0x001A]     # older XVF3800 firmware variants
 TIMEOUT       = 100_000
 
 CONTROL_SUCCESS        = 0
@@ -53,6 +54,11 @@ class DOAReader:
 
     def __init__(self, vid=VID_RESPEAKER, pid=PID_XVF3800):
         dev = usb.core.find(idVendor=vid, idProduct=pid)
+        if dev is None:
+            for fallback_pid in PID_FALLBACKS:
+                dev = usb.core.find(idVendor=vid, idProduct=fallback_pid)
+                if dev is not None:
+                    break
         if dev is None:
             raise RuntimeError(
                 f"No ReSpeaker found (VID=0x{vid:04x}, PID=0x{pid:04x}). "

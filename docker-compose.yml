@@ -75,7 +75,7 @@ services:
     container_name: bumblebee-server
     # Change --device to match your ReSpeaker index inside the container.
     # Run:  docker compose run --rm server python3 step5_test.py --list-devices
-    command: python3 bumblebee_server.py --device respeaker --threshold 0.5
+    command: python3 bumblebee_server.py --device respeaker --threshold 0.75
     volumes:
       - ./model:/app/model
       - ./voices:/app/voices
