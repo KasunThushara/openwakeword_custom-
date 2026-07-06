@@ -2,6 +2,7 @@
 data/
 features/
 voices/
+.cache/
 
 # ─── Python ───────────────────────────────────────────────────────
 __pycache__/

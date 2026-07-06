@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libasound2-dev \
     libasound2-plugins \
+    libusb-1.0-0 \
+    libusb-1.0-0-dev \
     alsa-utils \
     ffmpeg \
     build-essential \
@@ -79,7 +81,8 @@ RUN pip install \
     onnxruntime \
     sounddevice \
     flask \
-    websockets
+    websockets \
+    pyusb
 
 # 4 ── Pin numpy < 2.0  ← MUST be last, AFTER all other packages
 #      --force-reinstall overwrites the numpy 2.x that datasets/audiomentations pulled in
@@ -92,9 +95,10 @@ RUN pip install \
     --index-url https://download.pytorch.org/whl/cpu \
     --force-reinstall
 
-# ── ALSA null config (suppresses "no soundcards" when mic not mounted) ──
-RUN echo 'pcm.!default { type null }'  > /etc/asound.conf \
- && echo 'ctl.!default { type null }' >> /etc/asound.conf
+# ── ALSA config placeholder — will be overridden at runtime when /dev/snd is mounted ──
+# The null config from earlier builds blocked real audio capture.
+# Instead we ship a minimal config that works whether or not a mic is present.
+RUN echo '# ALSA config — real devices mounted via docker compose' > /etc/asound.conf
 
 # ── Copy project source ───────────────────────────────────────────
 COPY config.py                  ./
@@ -106,11 +110,13 @@ COPY step5_test.py              ./
 COPY diagnose.py                ./
 COPY app.py                     ./
 COPY bumblebee_server.py        ./
+COPY doa_reader.py              ./
 COPY bumblebee_face.html        ./
 COPY model/                     ./model/
 COPY model/                     ./default_model/
 
-RUN mkdir -p data/positive data/negative features model voices default_model
+RUN mkdir -p data/positive data/negative features model voices default_model \
+ && mkdir -p /root/.cache/openwakeword /root/.cache/huggingface
 
 EXPOSE 5000
 EXPOSE 8767

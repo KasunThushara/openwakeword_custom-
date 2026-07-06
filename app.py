@@ -7,6 +7,7 @@ python app.py
 Open  http://localhost:5000
 """
 
+import collections
 import json
 import re
 import shutil
@@ -29,6 +30,7 @@ app = Flask(__name__)
 _steps       = {}   # {int: {process, log_queue, status, started_at}}
 _server_proc = None
 _server_lock = threading.Lock()
+_server_log  = collections.deque(maxlen=200)  # last 200 lines of server output
 
 STEP_SCRIPTS = {
     1: "step1_generate_clips.py",
@@ -320,7 +322,7 @@ def api_devices():
 
 @app.route("/api/server/start", methods=["POST"])
 def api_srv_start():
-    global _server_proc
+    global _server_proc, _server_log
     with _server_lock:
         if _server_proc and _server_proc.poll() is None:
             return jsonify({"ok": False, "message": "already running"})
@@ -331,33 +333,73 @@ def api_srv_start():
                "--threshold", str(thr)]
         if dev is not None:
             cmd += ["--device", str(dev)]
+
+        _server_log.clear()
+        _server_log.append(f"[CMD] {' '.join(cmd)}")
+
         try:
             _server_proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
                 cwd=str(PROJECT_ROOT),
             )
-            time.sleep(0.9)
-            if _server_proc.poll() is not None:
-                return jsonify({"ok": False,
-                                "message": "Server exited — model not found? Run training first."})
-            return jsonify({"ok": True, "pid": _server_proc.pid})
         except Exception as exc:
+            _server_log.append(f"[ERROR] Launch failed: {exc}")
             return jsonify({"ok": False, "error": str(exc)})
+
+        def _drain():
+            try:
+                for line in _server_proc.stdout:
+                    _server_log.append(line.rstrip())
+                _server_proc.wait()
+                rc = _server_proc.returncode
+                _server_log.append(f"[EXIT] code={rc}")
+            except Exception:
+                pass
+
+        threading.Thread(target=_drain, daemon=True).start()
+
+        time.sleep(1.5)
+        if _server_proc.poll() is not None:
+            # Server exited during startup — capture output for diagnosis
+            tail = list(_server_log)[-15:]
+            detail = "\n".join(tail)
+            _server_log.append("[DIED] Server process exited immediately after launch")
+            return jsonify({
+                "ok": False,
+                "message": "Server crashed at startup. See server-log for details.",
+                "log": tail,
+            })
+        return jsonify({"ok": True, "pid": _server_proc.pid, "log": list(_server_log)[:3]})
 
 
 @app.route("/api/server/stop", methods=["POST"])
 def api_srv_stop():
-    global _server_proc
+    global _server_proc, _server_log
     with _server_lock:
         if _server_proc and _server_proc.poll() is None:
             _server_proc.terminate()
+            try:
+                _server_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _server_proc.kill()
+            _server_log.append("[STOPPED] Server terminated by user")
         _server_proc = None
         return jsonify({"ok": True})
 
 
 @app.route("/api/server/status")
 def api_srv_status():
-    return jsonify({"running": bool(_server_proc and _server_proc.poll() is None)})
+    return jsonify({
+        "running": bool(_server_proc and _server_proc.poll() is None),
+    })
+
+
+@app.route("/api/server/log")
+def api_srv_log():
+    return jsonify({"lines": list(_server_log)})
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -375,7 +417,9 @@ def face():
     html = FACE_PATH.read_text()
     for old, new in [
         ("Bumblebee · Wake Word",                   f"{kt} · Wake Word"),
+        ("Bumblebee · DOA Monitor",                 f"{kt} · DOA Monitor"),
         ("BUMBLEBEE <em>· WAKE WORD MONITOR</em>",  f"{ku} <em>· WAKE WORD MONITOR</em>"),
+        ("BUMBLEBEE <em>· DOA MONITOR</em>",        f"{ku} <em>· DOA MONITOR</em>"),
         (">BUMBLEBEE<",                              f">{ku}<"),
         ("'BUMBLEBEE!'",                             f"'{ku}!'"),
         ('"BUMBLEBEE!"',                             f'"{ku}!"'),
@@ -963,7 +1007,10 @@ body::before {
     <div class="srv-status">
       <div class="srv-dot" id="srv-dot"></div>
       <span id="srv-txt">OFFLINE — configure microphone and click START</span>
+      <button class="btn btn-sm" style="margin-left:auto;color:var(--dim);border-color:var(--bdr);" 
+              onclick="toggleSrvLog()">📋 LOG</button>
     </div>
+    <div class="step-log" id="srv-log" style="display:none;max-height:200px;margin-bottom:16px;"></div>
   </div>
 
   <iframe class="face-frame" id="face" src="about:blank" frameborder="0"></iframe>
@@ -1309,10 +1356,29 @@ async function checkModel() {
   } catch(e) {}
 }
 
+function toggleSrvLog() {
+  const el = document.getElementById('srv-log');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  fetchSrvLog();
+}
+
+async function fetchSrvLog() {
+  try {
+    const r = await fetch('/api/server/log');
+    const d = await r.json();
+    const el = document.getElementById('srv-log');
+    el.innerHTML = (d.lines||[]).map(l => `<div class="log-ln">${esc(l)}</div>`).join('');
+    el.scrollTop = el.scrollHeight;
+  } catch(e) {}
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
 // ── Server ──────────────────────────────────────────────────────
 async function srvStart() {
   const dev = document.getElementById('dev-sel').value;
   const thr = parseFloat(document.getElementById('thr').value);
+  document.getElementById('srv-txt').textContent = 'LAUNCHING…';
   const r = await fetch('/api/server/start', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
@@ -1324,14 +1390,27 @@ async function srvStart() {
     reloadFace();
     toast('Detection server started', 'ok');
   } else {
-    toast('Server error: '+(d.message||d.error), 'err', 5000);
+    setSrvState(false, 'OFFLINE — server failed to start');
+    const el = document.getElementById('srv-log');
+    el.style.display = 'block';
+    el.innerHTML = '<div class="log-ln err">✗ SERVER CRASHED AT STARTUP</div>';
+    if (d.log) {
+      d.log.forEach(l => {
+        el.innerHTML += `<div class="log-ln${l.toLowerCase().includes('error')||l.toLowerCase().includes('traceback')?' err':''}">${esc(l)}</div>`;
+      });
+    }
+    el.innerHTML += `<div class="log-ln" style="color:var(--dim)">${esc(d.message||'')}</div>`;
+    el.scrollTop = el.scrollHeight;
+    toast('Server error — check log panel', 'err', 8000);
   }
+  fetchSrvLog();
 }
 
 async function srvStop() {
   await fetch('/api/server/stop', {method:'POST'});
   setSrvState(false, 'OFFLINE — click START to begin listening');
   toast('Server stopped', 'info');
+  fetchSrvLog();
 }
 
 function setSrvState(on, txt) {
@@ -1353,6 +1432,9 @@ setInterval(async () => {
     document.getElementById('srv-dot').classList.toggle('on', s.running);
     document.getElementById('btn-start').disabled = s.running;
     document.getElementById('btn-stop').disabled  = !s.running;
+    if (document.getElementById('srv-log').style.display !== 'none') {
+      fetchSrvLog();
+    }
   } catch(e) {}
 }, 3000);
 

@@ -29,7 +29,9 @@ services:
     command: python3 app.py
     ports:
       - "5000:5000"    # Flask web UI
-      - "8767:8767"    # WebSocket (for face animation in browser)
+# Note: port 8767 is NOT mapped here — the server service occupies it via
+# network_mode:host. Running both services simultaneously works because
+# the trainer only needs port 5000 and the server binds 8767 on the host.
     volumes:
       # Mount generated directories so data persists across container restarts.
       # Train once, keep the model forever — no need to rebuild the image.
@@ -37,6 +39,10 @@ services:
       - ./features:/app/features
       - ./model:/app/model
       - ./voices:/app/voices
+      # Persist openWakeWord pre-trained model cache so they are not
+      # re-downloaded every time the container is recreated.
+      - ./.cache/oww:/root/.cache/openwakeword
+      - ./.cache/huggingface:/root/.cache/huggingface
     devices:
       - /dev/snd:/dev/snd
     group_add:
@@ -73,11 +79,15 @@ services:
     volumes:
       - ./model:/app/model
       - ./voices:/app/voices
+      # Persist openWakeWord pre-trained model cache
+      - ./.cache/oww:/root/.cache/openwakeword
+      - ./.cache/huggingface:/root/.cache/huggingface
     # ── Audio device access ────────────────────────────────────────
     # Gives the container access to the host's ALSA sound system.
     # /dev/snd  → all ALSA sound devices (including ReSpeaker)
     devices:
       - /dev/snd:/dev/snd
+      - /dev/bus/usb:/dev/bus/usb     # USB control transfers (DOA, VAD from ReSpeaker)
     # Add container user to the audio group so it can open /dev/snd
     group_add:
       - audio

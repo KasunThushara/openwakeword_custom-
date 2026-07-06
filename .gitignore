@@ -37,5 +37,6 @@ Thumbs.db
 # Jupyter
 .ipynb_checkpoints/
 
-# Hugging Face cache
+# Hugging Face / openWakeWord cache
 ~/.cache/huggingface/
+.cache/
