@@ -185,13 +185,14 @@ def api_config_get():
 def api_config_set():
     d = request.get_json() or {}
     try:
-        ww = (d.get("wake_word") or "bumblebee").strip().lower()
-        phrases = [p.strip() for p in (d.get("phrases") or [ww]) if str(p).strip()]
+        phrases = [p.strip() for p in (d.get("phrases") or []) if str(p).strip()]
         if not phrases:
-            phrases = [ww]
+            phrases = ["bumblebee"]
+        ww = phrases[0]                              # WAKE_WORD = first phrase (single source of truth)
+        model_name = ww.replace(" ", "_")             # MODEL_NAME = filename-safe variant
         patch_config({
             "WAKE_WORD":        ww,
-            "MODEL_NAME":       ww,
+            "MODEL_NAME":       model_name,
             "PHRASES":          phrases,
             "N_POSITIVE_CLIPS": int(d.get("n_positive", 5000)),
             "N_NEGATIVE_CLIPS": int(d.get("n_negative", 3000)),
@@ -880,7 +881,8 @@ body::before {
 
     <div class="field">
       <label>TRAINING PHRASES — all variants the model should recognise (one per line)</label>
-      <textarea id="phrases" placeholder="bumblebee&#10;hey bumblebee&#10;ok bumblebee&#10;bumble bee"></textarea>
+      <textarea id="phrases" placeholder="bumblebee&#10;hey bumblebee&#10;ok bumblebee&#10;bumble bee"
+                oninput="onPhrasesChange()"></textarea>
       <div class="hint">Include phonetic variants and natural prefixes. The bare keyword should always be listed.</div>
     </div>
   </div>
@@ -1073,8 +1075,20 @@ function onKwChange() {
   document.getElementById('regen-warn').classList.toggle('hidden', v === _origKw || !v);
 }
 
+function onPhrasesChange() {
+  const lines = document.getElementById('phrases').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  if (lines.length > 0) {
+    document.getElementById('kw').value = lines[0];
+    onKwChange();
+  }
+}
+
 async function saveConfig() {
   const kw = document.getElementById('kw').value.trim().toLowerCase();
+  if (kw.includes(' ')) {
+    toast('Wake word contains spaces — model file will use underscores ("' + kw.replace(/ /g, '_') + '")', 'info', 5000);
+  }
   const phrases = document.getElementById('phrases').value
     .split('\n').map(s=>s.trim()).filter(Boolean);
   if (!kw) { toast('Keyword cannot be empty', 'err'); return; }

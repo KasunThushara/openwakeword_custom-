@@ -1,18 +1,22 @@
 """
 bumblebee_server.py
 ===================
-WebSocket bridge for your custom bumblebee ONNX wake-word model.
+Two-stage wake-word + command detection server.
 
-Run this on the same machine where your mic and model are available.
-Then open bumblebee_face.html in a browser.
+  1. WAITING  — listens for "bumblebee" (wake word)
+  2. COMMAND  — listens for command phrases for 6 seconds
+     (activate party mode, back to normal mode, play spanish music,
+      wave your antenna)
+
+All .onnx models in model/ are loaded at startup.
+Broadcasts wake/intent/DOA to WebSocket clients on ws://localhost:8767.
 
 Requirements:
-    pip install openwakeword onnxruntime sounddevice websockets
+    pip install openwakeword onnxruntime sounddevice websockets pyusb
 
 Usage:
     python bumblebee_server.py
-    python bumblebee_server.py --device 9
-    python bumblebee_server.py --threshold 0.55
+    python bumblebee_server.py --device respeaker --threshold 0.75
 """
 
 import argparse
@@ -20,7 +24,9 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import sys
+import threading 
 import time
 import traceback
 
@@ -32,17 +38,100 @@ import openwakeword
 from openwakeword.model import Model
 
 import config
-import doa_reader
 
 WS_HOST = "localhost"
 WS_PORT = 8767
 CLIENTS = set()
+_current_sound = None
+
+# Map ONNX filename (without .onnx) → intent + optional sound effect
+# The wake word "bumblebee" is NOT in this dict — it's the gatekeeper.
+COMMANDS = {
+    "activate_party_mode": {
+        "intent": {"type": "intent", "intent": "lights",
+                   "slots": {"command": "activate", "mode": "party"}},
+        "sound": None,
+    },
+    "back_to_normal_mode": {
+        "intent": {"type": "intent", "intent": "lights",
+                   "slots": {"command": "deactivate", "mode": "party"}},
+        "sound": None,
+    },
+    "play_spanish_music": {
+        "intent": {"type": "intent", "intent": "sounds",
+                   "slots": {"genre": "spanish"}},
+        "sound": "spanish.mp3",
+    },
+    "wave_your_antenna": {
+        "intent": {"type": "intent", "intent": "gesture",
+                   "slots": {"command": "shake", "part": "antenna"}},
+        "sound": None,
+    },
+}
 
 
 def log(msg: str) -> None:
     """Print with timestamp so docker logs are useful."""
     ts = time.strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
+
+
+def play_sound(path: str) -> None:
+    """Play a WAV or MP3 file non-blocking via hardware ALSA device."""
+    full = str(config.MUSIC_DIR / path)
+    if not os.path.exists(full):
+        log(f"Sound not found: {full}")
+        return
+    global _current_sound
+    if _current_sound and _current_sound.poll() is None:
+        _current_sound.terminate()
+        _current_sound.wait()
+    try:
+        if full.endswith(".mp3"):
+            _current_sound = subprocess.Popen(
+                ["mpg123", "-q", full],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+        else:
+            _current_sound = subprocess.Popen(
+                ["aplay", "-q", full],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            )
+    except FileNotFoundError:
+        log("aplay / mpg123 not found — install alsa-utils mpg123")
+    except Exception as exc:
+        log(f"Sound playback error: {exc}")
+
+    def _check():
+        if _current_sound:
+            rc = _current_sound.wait()
+            if rc != 0:
+                err = _current_sound.stderr.read().decode(errors="replace")
+                log(f"Sound via PulseAudio failed (exit {rc}), trying direct hardware ...")
+                # Fallback: direct ALSA hardware (works in Docker / root, no PulseAudio needed)
+                try:
+                    if full.endswith(".mp3"):
+                        fallback = subprocess.Popen(
+                            ["mpg123", "-q", "-o", "alsa", "-a", "hw:1,0", full],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        )
+                    else:
+                        fallback = subprocess.Popen(
+                            ["aplay", "-D", "hw:1,0", full],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        )
+                    fc = fallback.wait()
+                    if fc != 0:
+                        ferr = fallback.stderr.read().decode(errors="replace")
+                        log(f"Sound via hw:2,0 also failed (exit {fc}): {ferr.strip()}")
+                    else:
+                        log("Sound playback OK (direct hardware)")
+                except Exception as exc2:
+                    log(f"Sound fallback error: {exc2}")
+            else:
+                log("Sound playback OK")
+
+    threading.Thread(target=_check, daemon=True).start()
 
 
 def list_devices() -> None:
@@ -106,57 +195,42 @@ def resolve_device(device_arg):
     return int(device_arg)
 
 
-def build_model() -> Model:
-    """Load the custom ONNX model via openWakeWord."""
-    onnx_path = config.MODEL_DIR / f"{config.MODEL_NAME}.onnx"
-    log(f"Looking for model: {onnx_path}")
+def load_all_models():
+    """Load bumblebee (wake word) + all command models into one OWW Model."""
+    model_dir = config.MODEL_DIR
+    onnx_files = sorted(model_dir.glob("*.onnx"))
+    if not onnx_files:
+        raise SystemExit(f"FATAL: No .onnx models found in {model_dir}")
 
-    if not onnx_path.exists():
-        default_path = config.DEFAULT_MODEL_DIR / f"{config.MODEL_NAME}.onnx"
-        log(f"Model not found in {config.MODEL_DIR}, checking fallback: {default_path}")
-        if default_path.exists():
-            config.MODEL_DIR.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(default_path, onnx_path)
-            log(f"Copied fallback model to {onnx_path}")
-        else:
-            log(f"FATAL: Model not found at {onnx_path} or {default_path}")
-            log("Run step4_train.py first to generate the model.")
-            raise SystemExit(1)
+    openwakeword.utils.download_models()
 
-    # Download openWakeWord's internal pre-trained models (VAD + embedding backbone).
-    # These are cached so subsequent restarts skip the download.
-    log("Checking openWakeWord pre-trained models (downloaded if missing) ...")
-    try:
-        openwakeword.utils.download_models()
-        log("Pre-trained models ready")
-    except Exception as exc:
-        log(f"WARNING: download_models() failed: {exc}")
-        log("The server may still work if models were already cached.")
-        log("If it crashes, check network connectivity inside the container.")
+    log(f"Loading {len(onnx_files)} model(s) from {model_dir}:")
+    paths = []
+    for p in onnx_files:
+        log(f"  {p.name}")
+        paths.append(str(p))
 
-    log(f"Loading ONNX model: {onnx_path.name}")
-    try:
-        model = Model(
-            wakeword_models=[str(onnx_path)],
-            inference_framework="onnx",
-            vad_threshold=0.0,
-        )
-    except Exception as exc:
-        log(f"FATAL: Failed to load model: {exc}")
-        traceback.print_exc()
-        raise SystemExit(1)
-
-    log("Model loaded successfully")
+    model = Model(
+        wakeword_models=paths,
+        inference_framework="onnx",
+        vad_threshold=0.0,
+    )
+    log("All models loaded successfully")
     return model
 
 
 async def audio_loop(device, threshold, debounce_ms):
     loop = asyncio.get_running_loop()
-    model = build_model()
+    model = load_all_models()
     last_trigger = 0.0
     chunk_size = 1280
     debounce_seconds = debounce_ms / 1000.0
-    report_interval = 1.5  # print debug stats every N seconds
+    report_interval = 1.5
+
+    # State machine
+    state = "WAITING"
+    cmd_start = 0.0
+    cmd_high = ("", 0.0)  # (stem, score)
 
     if device is not None:
         dev_info = sd.query_devices(device)
@@ -166,15 +240,13 @@ async def audio_loop(device, threshold, debounce_ms):
         num_channels = dev_info["max_input_channels"]
 
     log(f"Microphone: [{device}] {dev_info['name']}")
-    log(f"Channels: {num_channels}, default sample rate: {dev_info['default_samplerate']}")
-    log(f"Chunk size: {chunk_size} samples ({chunk_size / config.SAMPLE_RATE * 1000:.0f} ms)")
+    log(f"Channels: {num_channels}")
     log(f"Threshold: {threshold}, debounce: {debounce_ms} ms")
     log("Starting audio stream ...")
 
     doa_dev = None
     doa_task = None
 
-    # Debug accumulators
     dbg_chunks = 0
     dbg_rms_sum = 0.0
     dbg_rms_peak = 0.0
@@ -182,7 +254,8 @@ async def audio_loop(device, threshold, debounce_ms):
     dbg_last_report = time.time()
 
     def callback(indata, frames, time_info, status):
-        nonlocal last_trigger, dbg_chunks, dbg_rms_sum, dbg_rms_peak, dbg_score_peak, dbg_last_report
+        nonlocal last_trigger, state, cmd_start, cmd_high
+        nonlocal dbg_chunks, dbg_rms_sum, dbg_rms_peak, dbg_score_peak, dbg_last_report
         if status:
             log(f"Audio input warning: {status}")
         if frames != chunk_size:
@@ -197,35 +270,75 @@ async def audio_loop(device, threshold, debounce_ms):
             log(f"Prediction error: {exc}")
             return
 
-        score = float(list(pred.values())[0])
+        now = time.time()
 
+        # Extract per-model scores
+        bumblebee_score = float(pred.get("bumblebee", 0.0))
+        peak_score = bumblebee_score
+
+        # Debug
         dbg_chunks += 1
         dbg_rms_sum += rms
         if rms > dbg_rms_peak:
             dbg_rms_peak = rms
-        if score > dbg_score_peak:
-            dbg_score_peak = score
 
-        now = time.time()
+        # ── State: WAITING ───────────────────────────────────────────
+        if state == "WAITING":
+            if bumblebee_score >= threshold and (now - last_trigger) >= debounce_seconds:
+                last_trigger = now
+                model.reset()
+                play_sound("robot.wav")
+                asyncio.run_coroutine_threadsafe(
+                    broadcast(json.dumps({"type": "wake"})), loop)
+                log(f"WAKE  bumblebee  score={bumblebee_score:.4f}")
+                state = "COMMAND_LISTENING"
+                cmd_start = now
+                cmd_high = ("", 0.0)
+            if bumblebee_score > dbg_score_peak:
+                dbg_score_peak = bumblebee_score
+
+        # ── State: COMMAND_LISTENING ─────────────────────────────────
+        elif state == "COMMAND_LISTENING":
+            for stem, info in COMMANDS.items():
+                s = float(pred.get(stem, 0.0))
+                if s > cmd_high[1]:
+                    cmd_high = (stem, s)
+                if s > peak_score:
+                    peak_score = s
+
+            if cmd_high[1] >= threshold and (now - cmd_start) > 0.5:
+                cmd = COMMANDS.get(cmd_high[0])
+                if cmd:
+                    asyncio.run_coroutine_threadsafe(
+                        broadcast(json.dumps(cmd["intent"])), loop)
+                    log(f"COMMAND  {cmd_high[0]}  score={cmd_high[1]:.4f}")
+                    if cmd["sound"]:
+                        play_sound(cmd["sound"])
+                state = "WAITING"
+                cmd_high = ("", 0.0)
+                return
+
+            if now - cmd_start >= config.COMMAND_TIMEOUT:
+                asyncio.run_coroutine_threadsafe(
+                    broadcast(json.dumps({"type": "timeout"})), loop)
+                log("COMMAND timeout — back to standby")
+                state = "WAITING"
+                cmd_high = ("", 0.0)
+
+        if peak_score > dbg_score_peak:
+            dbg_score_peak = peak_score
+
         if now - dbg_last_report >= report_interval:
             avg_rms = dbg_rms_sum / max(dbg_chunks, 1)
-            log(f"DEBUG  chunks={dbg_chunks}  avg_RMS={avg_rms:.0f}  peak_RMS={dbg_rms_peak:.0f}  peak_score={dbg_score_peak:.4f}  threshold={threshold}")
+            st = f"state={state}"
+            if state == "COMMAND_LISTENING":
+                st += f"  top_cmd={cmd_high[0]}:{cmd_high[1]:.3f}  timeout={max(0, config.COMMAND_TIMEOUT - (now - cmd_start)):.0f}s"
+            log(f"DEBUG  {st}  avg_RMS={avg_rms:.0f}  peak_RMS={dbg_rms_peak:.0f}  peak_score={dbg_score_peak:.4f}")
             dbg_chunks = 0
             dbg_rms_sum = 0.0
             dbg_rms_peak = 0.0
             dbg_score_peak = 0.0
             dbg_last_report = now
-
-        if score >= threshold and (now - last_trigger) >= debounce_seconds:
-            last_trigger = now
-            model.reset()
-            payload = json.dumps({
-                "type": "wake",
-                "keyword": "bumblebee",
-                "score": round(score, 4),
-            })
-            asyncio.run_coroutine_threadsafe(broadcast(payload), loop)
-            log(f"DETECTED  bumblebee  score={score:.4f}")
 
     try:
         with sd.InputStream(
@@ -240,6 +353,7 @@ async def audio_loop(device, threshold, debounce_ms):
 
             # ── DOA reader (ReSpeaker USB control) — start AFTER audio stream is open ──
             try:
+                import doa_reader
                 doa_dev = doa_reader.DOAReader()
                 ver = doa_dev.version()
                 log(f"ReSpeaker DOA reader ready (firmware {ver})")

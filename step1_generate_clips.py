@@ -143,7 +143,7 @@ def synthesise_clips(voice_paths: list[Path]) -> None:
         audio = pad_to_target(audio)
 
         # ── Save as 16-bit 16 kHz WAV ────────────────────────────────
-        out = config.POSITIVE_DIR / f"bumblebee_{i:05d}.wav"
+        out = config.POSITIVE_DIR / f"{config.WAKE_WORD}_{i:05d}.wav"
         sf.write(str(out), audio, config.SAMPLE_RATE, subtype="PCM_16")
 
     total = len(list(config.POSITIVE_DIR.glob("*.wav")))
@@ -152,7 +152,7 @@ def synthesise_clips(voice_paths: list[Path]) -> None:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  STEP 1 – Generate positive 'bumblebee' clips  (FIXED)")
+    print(f"  STEP 1 – Generate positive '{config.WAKE_WORD}' clips")
     print("=" * 60)
     voice_paths = download_voices()
     synthesise_clips(voice_paths)

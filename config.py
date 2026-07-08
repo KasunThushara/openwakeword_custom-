@@ -19,12 +19,12 @@ for _d in [POSITIVE_DIR, NEGATIVE_DIR, FEATURES_DIR, MODEL_DIR, VOICES_DIR, DEFA
     _d.mkdir(parents=True, exist_ok=True)
 
 # ── Wake word ──────────────────────────────────────────────────────
-WAKE_WORD = "bumblebee"
+WAKE_WORD = "wave your antenna"
 
 # Phrase variants fed to TTS.
 # The model learns ALL of them – use phrases you'll actually speak.
 PHRASES = [
-    "bumblebee",
+    "wave your antenna",
 ]
 
 # ── Audio ──────────────────────────────────────────────────────────
@@ -48,7 +48,12 @@ LEARNING_RATE  = 0.001
 VAL_SPLIT      = 0.15      # 15 % held out for validation
 
 # ── Output ─────────────────────────────────────────────────────────
-MODEL_NAME     = "bumblebee"   # output file: model/bumblebee.onnx
+MODEL_NAME     = "wave_your_antenna"   # output file: model/bumblebee.onnx
+
+# ── Music / sound effects ──────────────────────────────────────────
+MUSIC_DIR       = PROJECT_ROOT / "music"
+WAKE_SOUND      = MUSIC_DIR / "robot.wav"
+COMMAND_TIMEOUT = 6           # seconds to wait for a command after wake
 
 # ── Piper voice models to download ────────────────────────────────
 # Using two voices (male + female) for speaker diversity.

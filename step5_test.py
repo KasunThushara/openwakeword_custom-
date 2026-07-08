@@ -138,7 +138,7 @@ def live_test(threshold: float, device) -> None:
     print(f"\n  🎙  Device  : [{device}] {dev_info['name']}")
     print(f"  Channels   : {dev_info['max_input_channels']}")
     print(f"  Threshold  : {threshold}")
-    print(f"\n  🎤  Listening … say 'bumblebee'")
+    print(f"\n  🎤  Listening … say '{config.WAKE_WORD}'")
     print("  Ctrl+C to stop\n")
 
     # ── How Model.predict() works (for understanding) ──────────────

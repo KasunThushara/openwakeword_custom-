@@ -39,6 +39,7 @@ services:
       - ./features:/app/features
       - ./model:/app/model
       - ./voices:/app/voices
+      - ./music:/app/music
       # Persist openWakeWord pre-trained model cache so they are not
       # re-downloaded every time the container is recreated.
       - ./.cache/oww:/root/.cache/openwakeword
@@ -79,6 +80,7 @@ services:
     volumes:
       - ./model:/app/model
       - ./voices:/app/voices
+      - ./music:/app/music
       # Persist openWakeWord pre-trained model cache
       - ./.cache/oww:/root/.cache/openwakeword
       - ./.cache/huggingface:/root/.cache/huggingface

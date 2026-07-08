@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libusb-1.0-0 \
     libusb-1.0-0-dev \
     alsa-utils \
+    mpg123 \
     ffmpeg \
     build-essential \
     pkg-config \
@@ -114,8 +115,9 @@ COPY doa_reader.py              ./
 COPY bumblebee_face.html        ./
 COPY model/                     ./model/
 COPY model/                     ./default_model/
+COPY music/                     ./music/
 
-RUN mkdir -p data/positive data/negative features model voices default_model \
+RUN mkdir -p data/positive data/negative features model voices default_model music \
  && mkdir -p /root/.cache/openwakeword /root/.cache/huggingface
 
 EXPOSE 5000
